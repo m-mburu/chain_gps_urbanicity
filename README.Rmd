@@ -1,0 +1,352 @@
+---
+title: "CHAIN GPS Black Marble Urbanicity"
+output:
+  github_document:
+    toc: true
+    toc_depth: 2
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+# Overview
+
+This project demonstrates how to create a `degree_urban` variable from GPS
+coordinates using NASA Black Marble nighttime lights data.
+
+The intended users are working in RStudio. They only need to edit one script:
+
+```text
+R/process_blackmarble_urbanicity.R
+```
+
+That script points to the input data, chooses the output path, and defines the
+longitude/latitude column names. The reusable download and extraction logic is
+kept in `R/blackmarble_urbanicity_functions.R` and should not need editing for
+ordinary data sets.
+
+# Required Input
+
+The processing script expects one row per GPS point with these columns by default:
+
+```text
+record_id, site, Longitude, Latitude, adm_date
+```
+
+If the coordinate columns are named differently, edit this line in
+`R/process_blackmarble_urbanicity.R`:
+
+```r
+gps_cols <- c("Longitude", "Latitude")
+```
+
+For example:
+
+```r
+gps_cols <- c("lon", "lat")
+```
+
+The first value must be longitude and the second must be latitude.
+
+Column meanings:
+
+```{r input-contract, echo=FALSE}
+data.frame(
+  column = c("record_id", "site", "Longitude", "Latitude", "adm_date"),
+  meaning = c(
+    "Unique row or participant/location identifier",
+    "Site or study location name used to group downloads",
+    "Longitude in decimal degrees, WGS84",
+    "Latitude in decimal degrees, WGS84",
+    "Admission or observation date; the year selects the Black Marble annual product"
+  )
+)
+```
+
+# What Users Need Before Running
+
+## 1. NASA Earthdata / LAADS token
+
+Black Marble H5 files are downloaded from NASA LAADS DAAC. Users need a NASA
+Earthdata account and a LAADS bearer token.
+
+Follow the token instructions in the BlackMarbleR documentation:
+
+<https://worldbank.github.io/blackmarbler/#bearer-token>
+
+In short:
+
+1. Create or sign in to a NASA Earthdata account.
+2. Fill in the required profile fields such as study area, user type, and
+   organization.
+3. Accept the required EULAs.
+4. Authorize LAADS access if prompted.
+5. Go to Earthdata Login and use **Generate Token** / **Show Token** to copy the
+   bearer token.
+
+If the token stops working later, generate a new token and update `.Renviron`.
+
+## 2. Save the token in `.Renviron`
+
+In RStudio, run this once in the Console:
+
+```{r edit-renviron, eval=FALSE}
+install.packages("usethis")
+usethis::edit_r_environ()
+```
+
+This opens the `.Renviron` file. Add one line:
+
+```text
+LAADS_DAAC="PASTE_YOUR_TOKEN_HERE"
+```
+
+Keep the quotes around the token, as shown above. Do not add `Bearer` inside the quotes.
+
+Save the file, then restart RStudio:
+
+```text
+Session > Restart R
+```
+
+After restart, users can check that R sees the token:
+
+```{r check-token, eval=FALSE}
+Sys.getenv("LAADS_DAAC")
+```
+
+This should print a long token string. If it prints `""`, `.Renviron` was not
+saved in the right place or RStudio was not restarted.
+
+# The One Script To Edit
+
+Open this file in RStudio:
+
+```text
+R/process_blackmarble_urbanicity.R
+```
+
+For a real data set, users usually only edit these lines near the top:
+
+```r
+input_file <- file.path("data", "my_real_gps_data.csv")
+output_file <- file.path("data", "processed", "my_real_gps_data_urbanicity.csv")
+gps_cols <- c("Longitude", "Latitude")
+```
+
+If the real data uses different coordinate names:
+
+```r
+gps_cols <- c("lon", "lat")
+```
+
+Then click **Source** in RStudio to run `R/process_blackmarble_urbanicity.R`.
+
+# Teaching Data
+
+For teaching or testing, open and source this script first:
+
+```text
+R/simulate_chain_gps_data.R
+```
+
+It creates:
+
+```text
+data/simulated_chain_gps_data.csv
+```
+
+Then source:
+
+```text
+R/process_blackmarble_urbanicity.R
+```
+
+The processing step writes:
+
+```text
+data/processed/simulated_chain_gps_data_urbanicity.csv
+data/metadata/blackmarble_download_log.csv
+```
+
+# Example Output: Kenya Counties
+
+After running `R/process_blackmarble_urbanicity.R`, users should be able to see
+both the extracted values and the raster context they came from. This example
+uses simulated patient points from Nairobi and Migori with the Kenya county
+shapefile copied into `data/raw/boundaries/kenya_counties/`.
+
+The two figures below use the 2020 annual Black Marble layer as display maps for
+an urban/rural contrast: Nairobi first, then Migori. Patient locations are plain
+blue dots. The dots only represent patient locations; no patient variables are
+mapped to color, size, or shape. Each raster is clipped to its county boundary
+and log-scaled for display only. The extracted `degree_urban` values below still
+come from each record's own admission year.
+
+```{r nairobi-example-map, echo=FALSE, out.width="80%", fig.cap="Nairobi patient locations over 2020 Black Marble nighttime lights."}
+nairobi_map <- file.path("data", "processed", "nairobi_blackmarble_patients.png")
+
+if (file.exists(nairobi_map)) {
+  knitr::include_graphics(nairobi_map)
+} else {
+  cat("Run R/plot_readme_kenya_county_examples.R after processing to create this example map.")
+}
+```
+
+```{r migori-example-map, echo=FALSE, out.width="80%", fig.cap="Migori patient locations over 2020 Black Marble nighttime lights."}
+migori_map <- file.path("data", "processed", "migori_blackmarble_patients.png")
+
+if (file.exists(migori_map)) {
+  knitr::include_graphics(migori_map)
+} else {
+  cat("Run R/plot_readme_kenya_county_examples.R after processing to create this example map.")
+}
+```
+
+The top five records by extracted `degree_urban` for each example county are:
+
+```{r kenya-county-top-five, echo=FALSE}
+urban_file <- file.path("data", "processed", "simulated_chain_gps_data_urbanicity.csv")
+example_sites <- c("Nairobi", "Migori")
+
+if (file.exists(urban_file)) {
+  urban_data <- data.table::fread(urban_file, na.strings = c(".", "NA"))
+  urban_data[
+    site %in% example_sites
+  ][
+    order(site, -degree_urban)
+  ][
+    , head(.SD, 5), by = site,
+    .SDcols = c("record_id", "adm_date", "Longitude", "Latitude", "degree_urban")
+  ]
+} else {
+  data.frame(message = "Run R/process_blackmarble_urbanicity.R to create the processed output.")
+}
+```
+
+To recreate the figure, open and source this script in RStudio:
+
+```text
+R/plot_readme_kenya_county_examples.R
+```
+
+# Optional Map Check
+
+The code from the BlackMarbleR documentation is useful for making a map. In this
+project, the equivalent optional QA script is:
+
+```text
+R/plot_blackmarble_site_map.R
+```
+
+Run `R/process_blackmarble_urbanicity.R` first, then open
+`R/plot_blackmarble_site_map.R` in RStudio and edit these lines if needed:
+
+```r
+site_name <- "Banfora"
+target_year <- 2016
+gps_cols <- c("Longitude", "Latitude")
+```
+
+Then click **Source**. The script uses the downloaded H5 files listed in
+`data/metadata/blackmarble_download_log.csv`, log-scales the raster for display,
+and writes a PNG map to `data/processed/`.
+
+This map is only for visual checking. The main output variable is still created
+by R/process_blackmarble_urbanicity.R.
+
+# Project Layout
+
+```text
+R/
+  simulate_chain_gps_data.R
+  blackmarble_urbanicity_functions.R
+  process_blackmarble_urbanicity.R
+  plot_blackmarble_site_map.R
+  plot_readme_kilifi_example.R
+  plot_readme_kenya_county_examples.R
+
+data/
+  simulated_chain_gps_data.csv
+  raw/
+    blackmarble_h5/
+      VNP46A4.A2016001.h17v07.002.2025101113454.h5
+    boundaries/
+      kenya_counties/
+        County.shp
+  processed/
+    simulated_chain_gps_data_urbanicity.csv
+    nairobi_blackmarble_patients.png
+    migori_blackmarble_patients.png
+  metadata/
+    blackmarble_download_log.csv
+```
+
+The `.h5` files keep their original NASA filenames. Those filenames identify
+the product, date, tile, and version. Site-specific usage is tracked separately
+in `data/metadata/blackmarble_download_log.csv`.
+
+# Install Packages
+
+Install the required R packages if needed:
+
+```{r install-packages, eval=FALSE}
+install.packages(c(
+  "data.table",
+  "sf",
+  "terra",
+  "httr2",
+  "readr",
+  "knitr",
+  "rmarkdown",
+  "usethis",
+  "ggplot2",
+  "tidyterra"
+))
+```
+
+# Quick Checks
+
+These chunks inspect local files only; they do not contact NASA.
+
+```{r expected-paths}
+expected_paths <- c(
+  "R/simulate_chain_gps_data.R",
+  "R/blackmarble_urbanicity_functions.R",
+  "R/process_blackmarble_urbanicity.R",
+  "R/plot_readme_kenya_county_examples.R",
+  "data/simulated_chain_gps_data.csv",
+  "data/raw/blackmarble_h5",
+  "data/raw/boundaries/kenya_counties/County.shp",
+  "data/processed",
+  "data/metadata/blackmarble_download_log.csv"
+)
+
+data.frame(
+  path = expected_paths,
+  exists = file.exists(expected_paths)
+)
+```
+
+```{r preview-simulated-input}
+input_file <- file.path("data", "simulated_chain_gps_data.csv")
+
+if (file.exists(input_file)) {
+  data.table::fread(input_file, nrows = 6)
+}
+```
+
+
+# Notes
+
+The raw Black Marble H5 cache may be large. It is kept under
+`data/raw/blackmarble_h5` so downloaded tiles can be reused across sites and
+runs without duplicating the same NASA tile under multiple site-specific names.
+This folder is excluded by `.gitignore` because some NASA H5 files can exceed
+GitHub's file-size limits.

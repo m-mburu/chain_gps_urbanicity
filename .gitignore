@@ -1,0 +1,42 @@
+# RStudio / R session files
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata/
+.Renviron
+.Renviron.local
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.tmp
+*.bak
+*.swp
+
+# Logs and manifests generated during local runs
+*.log
+data/metadata/blackmarble_download_log.csv
+
+# NASA Black Marble raw cache: large downloaded files, not suitable for GitHub
+data/raw/blackmarble_h5/
+*.h5
+*.hdf
+*.hdf5
+*.nc
+
+# Generated data outputs that can be rebuilt
+# Keep only the README PNG examples tracked.
+data/processed/*.csv
+data/processed/*.png
+!data/processed/nairobi_blackmarble_patients.png
+!data/processed/migori_blackmarble_patients.png
+R/*_urbanicity.csv
+R/simulated_chain_gps_data.csv
+/simulated_chain_gps_data.csv
+
+# Local rendered HTML output from README.Rmd
+README.html
+README_files/
+
+# Ad hoc plot outputs written inside R/
+R/*.png
