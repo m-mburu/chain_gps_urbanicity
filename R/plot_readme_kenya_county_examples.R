@@ -6,18 +6,20 @@ library(data.table)
 library(sf)
 library(terra)
 library(ggplot2)
-
-source(file.path("R", "blackmarble_urbanicity_functions.R"))
+library(here)
+source(here("R", "blackmarble_urbanicity_functions.R"))
 
 example_sites <- c("Nairobi", "Migori")
 target_year <- 2020
 gps_cols <- c("Longitude", "Latitude")
-point_file <- file.path("data", "processed", "simulated_chain_gps_data_urbanicity.csv")
-manifest_file <- file.path("data", "metadata", "blackmarble_download_log.csv")
-county_file <- file.path("data", "raw", "boundaries", "kenya_counties", "County.shp")
+point_file <- here(
+    "data", "processed", "simulated_chain_gps_data_urbanicity.csv"
+)
+manifest_file <- here("data", "metadata", "blackmarble_download_log.csv")
+county_file <- here("data", "raw", "boundaries", "kenya_counties", "County.shp")
 output_files <- c(
-    Nairobi = file.path("data", "processed", "nairobi_blackmarble_patients.png"),
-    Migori = file.path("data", "processed", "migori_blackmarble_patients.png")
+    Nairobi = here("data", "processed", "nairobi_blackmarble_patients.png"),
+    Migori = here("data", "processed", "migori_blackmarble_patients.png")
 )
 
 read_county_boundary <- function(county_file, site_name) {
@@ -39,7 +41,8 @@ read_site_blackmarble_raster <- function(manifest, site_name, target_year) {
     if (!nrow(manifest_rows)) {
         stop(
             "No cached Black Marble H5 files found for ", site_name,
-            " in ", target_year, ". Run R/process_blackmarble_urbanicity.R first."
+            " in ", target_year, ". Run R/process_blackmarble_urbanicity.R",
+            " first."
         )
     }
 
@@ -111,10 +114,16 @@ plot_blackmarble_patients <- function(
 }
 
 if (!file.exists(point_file)) {
-    stop("Point file not found: ", point_file, "\nRun R/process_blackmarble_urbanicity.R first.")
+    stop(
+        "Point file not found: ", point_file, "\nRun ",
+        "R/process_blackmarble_urbanicity.R first."
+    )
 }
 if (!file.exists(manifest_file)) {
-    stop("Manifest file not found: ", manifest_file, "\nRun R/process_blackmarble_urbanicity.R first.")
+    stop(
+        "Manifest file not found: ", manifest_file, "\nRun ",
+        "R/process_blackmarble_urbanicity.R first."
+    )
 }
 if (!file.exists(county_file)) {
     stop("County shapefile not found: ", county_file)

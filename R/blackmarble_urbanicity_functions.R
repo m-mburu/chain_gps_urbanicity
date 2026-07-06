@@ -2,6 +2,7 @@ library(data.table)
 library(sf)
 library(terra)
 
+# Clean and standardize the LAADS bearer token before any API requests.
 normalize_laads_bearer <- function(bearer = Sys.getenv("LAADS_DAAC")) {
     # "The token is usually stored in .Renviron with quotes, for example
     # LAADS_DAAC="...". R normally removes those quotes when it starts, but
@@ -19,6 +20,7 @@ normalize_laads_bearer <- function(bearer = Sys.getenv("LAADS_DAAC")) {
     bearer
 }
 
+# Convert a manifest path into a stable normalized string for logging.
 normalize_manifest_path <- function(path) {
     # "Store readable, stable paths in the manifest without requiring the file
     # to exist yet; new downloads may be logged before users inspect them."
@@ -29,6 +31,7 @@ normalize_manifest_path <- function(path) {
     normalizePath(path, winslash = "/", mustWork = FALSE)
 }
 
+# Return the first usable value in x, otherwise fall back to y.
 `%||%` <- function(x, y) {
     # "Small helper: use x when it has a real value, otherwise fall back to y."
     if (is.null(x) || !length(x) || all(is.na(x))) {
@@ -38,16 +41,56 @@ normalize_manifest_path <- function(path) {
     x[1]
 }
 
+# Validate the longitude and latitude column names used in GPS inputs.
 validate_gps_cols <- function(gps_cols) {
     # "gps_cols lets real data keep its own longitude/latitude column names.
     # The first value must be longitude and the second must be latitude."
-    if (length(gps_cols) != 2 || anyNA(gps_cols) || !all(nzchar(gps_cols))) {
-        stop("gps_cols must be a character vector like c('Longitude', 'Latitude').")
+    if (length(gps_cols) != 2 || anyNA(gps_cols) ||
+        !all(nzchar(gps_cols))) {
+        stop(
+            "gps_cols must be a character vector like ",
+            "c('Longitude', 'Latitude')."
+        )
     }
 
     as.character(gps_cols)
 }
 
+# Create the generated storage directories used by the Black Marble workflow.
+ensure_blackmarble_storage_paths <- function(
+  input_file = NULL,
+  output_file,
+  h5_dir,
+  log_file
+) {
+    # "These directories match the generated paths ignored in .gitignore:
+    # data/raw/blackmarble_h5, data/metadata, and data/processed."
+    candidate_dirs <- c(
+        dirname(normalize_manifest_path(input_file)),
+        dirname(normalize_manifest_path(output_file)),
+        dirname(normalize_manifest_path(log_file)),
+        dirname(normalize_manifest_path(h5_dir)),
+        normalize_manifest_path(h5_dir)
+    )
+
+    candidate_dirs <- unique(candidate_dirs)
+    candidate_dirs <- candidate_dirs[
+        !is.na(candidate_dirs) &
+            nzchar(candidate_dirs) &
+            candidate_dirs != "."
+    ]
+
+    invisible(lapply(
+        candidate_dirs,
+        dir.create,
+        recursive = TRUE,
+        showWarnings = FALSE
+    ))
+
+    candidate_dirs
+}
+
+# Append or update the tile usage manifest for each site-year download.
 append_blackmarble_manifest <- function(
   site,
   adm_year,
@@ -84,11 +127,16 @@ append_blackmarble_manifest <- function(
     invisible(new_log)
 }
 
+# Check whether the current LAADS token can access a known Black Marble file.
 check_nasa_token <- function(bearer) {
     # "Request only the first bytes of a known file. This is a cheap token
     # check and avoids downloading a full H5 tile just to test authentication."
     token_check <- httr2::request(
-        "https://ladsweb.modaps.eosdis.nasa.gov/archive/allData/5200/VNP46A4/2017/001/VNP46A4.A2017001.h21v09.002.2025105150816.h5"
+        paste0(
+            "https://ladsweb.modaps.eosdis.nasa.gov/",
+            "archive/allData/5200/VNP46A4/2017/001/",
+            "VNP46A4.A2017001.h21v09.002.2025105150816.h5"
+        )
     ) |>
         httr2::req_headers(
             Authorization = paste("Bearer", bearer),
@@ -107,11 +155,13 @@ check_nasa_token <- function(bearer) {
         )) {
         stop(
             "LAADS_DAAC was rejected by NASA LAADS. ",
-            "Refresh the token and accept the required Earthdata EULAs before rerunning."
+            "Refresh the token and accept the required ",
+            "Earthdata EULAs before rerunning."
         )
     }
 }
 
+# Prepare the authenticated bearer token used across Black Marble downloads.
 setup_blackmarble_downloads <- function(
   bearer = Sys.getenv("LAADS_DAAC"),
   check_token = TRUE
@@ -127,13 +177,15 @@ setup_blackmarble_downloads <- function(
     bearer
 }
 
+# Build a buffered ROI polygon around one site-year of GPS points.
 make_blackmarble_roi <- function(
   site_data,
   gps_cols = c("Longitude", "Latitude"),
   buffer_deg = 0.1
 ) {
     # "Build a small bounding box around all points for one site-year. This
-    # tells the pipeline which tile(s) it needs, instead of downloading globally."
+    # tells the pipeline which tile(s) it needs, instead of downloading
+    # globally."
     gps_cols <- validate_gps_cols(gps_cols)
     point_sf <- st_as_sf(as.data.frame(site_data),
         coords = gps_cols,
@@ -149,6 +201,7 @@ make_blackmarble_roi <- function(
     st_sf(geometry = st_as_sfc(bbox))
 }
 
+# Turn a date-like input into the annual year used by VNP46A4 products.
 normalize_vnp46a4_year <- function(date) {
     # "VNP46A4 is annual in this workflow, so a year like 2019 is enough."
     year <- as.integer(format(as.IDate(paste0(date, "-01-01")), "%Y"))
@@ -160,15 +213,20 @@ normalize_vnp46a4_year <- function(date) {
     year
 }
 
+# Load the official Black Marble tile grid used to match ROIs to tile IDs.
 read_blackmarble_tile_grid <- function() {
     # "This public grid maps Black Marble tile IDs like h17v07 to their
     # geographic footprints. We intersect it with the site ROI."
     sf::read_sf(
-        "https://raw.githubusercontent.com/worldbank/blackmarbler/main/data/blackmarbletiles.geojson",
+        paste0(
+            "https://raw.githubusercontent.com/worldbank/",
+            "blackmarbler/main/data/blackmarbletiles.geojson"
+        ),
         quiet = TRUE
     )
 }
 
+# Read the annual Black Marble metadata CSV that lists available H5 tiles.
 read_blackmarble_metadata <- function(
   year,
   bearer,
@@ -200,6 +258,7 @@ read_blackmarble_metadata <- function(
     as.data.table(metadata)
 }
 
+# Identify which Black Marble H5 tile files are needed for one ROI and year.
 find_blackmarble_tile_files <- function(
   roi_sf,
   year,
@@ -236,6 +295,7 @@ find_blackmarble_tile_files <- function(
     trimws(basename(metadata$name[grepl(tile_pattern, metadata$name)]))
 }
 
+# Download one Black Marble H5 tile to the local cache with retries.
 download_blackmarble_h5 <- function(
   file_name,
   bearer,
@@ -257,7 +317,10 @@ download_blackmarble_h5 <- function(
     h5_dir <- normalizePath(h5_dir, winslash = "/", mustWork = FALSE)
 
     if (grepl("[\r\n]", h5_dir) || grepl("[\r\n]", file_name)) {
-        stop("Black Marble cache path contains a hidden newline. Check h5_dir and file_name.")
+        stop(
+            "Black Marble cache path contains a hidden newline. ",
+            "Check h5_dir and file_name."
+        )
     }
 
     # "Keep the original NASA filename on disk. Site-specific meaning is logged
@@ -277,7 +340,9 @@ download_blackmarble_h5 <- function(
             tryCatch(
                 {
                     response <- httr2::request(url) |>
-                        httr2::req_headers(Authorization = paste("Bearer", bearer)) |>
+                        httr2::req_headers(
+                            Authorization = paste("Bearer", bearer)
+                        ) |>
                         httr2::req_timeout(timeout_seconds) |>
                         httr2::req_perform()
                     break
@@ -307,6 +372,7 @@ download_blackmarble_h5 <- function(
     download_path
 }
 
+# Replace Black Marble fill values with NA so they do not look like data.
 remove_blackmarble_fill_value <- function(x, variable) {
     # "Black Marble uses sentinel values for missing data. For the annual
     # radiance variables used here, 65535 means no usable value."
@@ -341,13 +407,17 @@ remove_blackmarble_fill_value <- function(x, variable) {
     x
 }
 
+# Convert one downloaded Black Marble H5 tile into a georeferenced raster.
 blackmarble_h5_to_raster <- function(
   h5_file,
   variable = "NearNadir_Composite_Snow_Free",
   quality_flag_rm = NULL
 ) {
     h5_data <- terra::rast(h5_file)
-    tile_id <- regmatches(basename(h5_file), regexpr("h[0-9]{2}v[0-9]{2}", basename(h5_file)))
+    tile_id <- regmatches(
+        basename(h5_file),
+        regexpr("h[0-9]{2}v[0-9]{2}", basename(h5_file))
+    )
     tile_grid <- read_blackmarble_tile_grid()
     tile_sf <- tile_grid[tile_grid$TileID %in% tile_id, ]
 
@@ -388,6 +458,7 @@ blackmarble_h5_to_raster <- function(
     remove_blackmarble_fill_value(raster, variable)
 }
 
+# Build a site-year raster by finding, downloading, reading, and mosaicing tiles.
 make_blackmarble_raster <- function(
   roi_sf,
   year,
@@ -446,6 +517,7 @@ make_blackmarble_raster <- function(
     terra::crop(raster, roi_sf)
 }
 
+# Extract annual Black Marble values for all points in one site-year subset.
 extract_site_year_degree_urban <- function(
   site_data,
   bearer,
@@ -488,6 +560,7 @@ extract_site_year_degree_urban <- function(
     as.numeric(terra::extract(blackmarble_raster, site_points)[[2]])
 }
 
+# Add the degree_urban variable to a GPS dataset using site-year extraction.
 add_blackmarble_degree_urban <- function(
   gps_data,
   bearer,
@@ -549,7 +622,11 @@ add_blackmarble_degree_urban <- function(
                     buffer_deg = buffer_deg
                 )
             )
-            gps_data[site_values, degree_urban := i.degree_urban, on = "record_id"]
+            gps_data[
+                site_values,
+                degree_urban := i.degree_urban,
+                on = "record_id"
+            ]
         }
     }
 
