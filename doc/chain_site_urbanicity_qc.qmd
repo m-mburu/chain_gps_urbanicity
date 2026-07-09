@@ -1,0 +1,239 @@
+---
+title: "CHAIN Site Urbanicity QC"
+format:
+  html:
+    toc: true
+    code-fold: true
+    embed-resources: true
+    dpi: 600
+execute:
+  warning: false
+  message: false
+---
+
+```{r setup}
+library(data.table)
+library(ggplot2)
+library(here)
+library(sf)
+library(terra)
+source(here("R", "blackmarble_urbanicity_functions.R"))
+
+site_sf_file <- here(
+    "data", "processed", "chain_data", "chain_site_sf_objects.rda"
+)
+blackmarble_manifest_file <- here(
+    "data", "processed", "chain_data", "blackmarble_download_log.csv"
+)
+
+if (!file.exists(site_sf_file)) {
+    stop(
+        "Site sf object file not found: ", site_sf_file, "\n",
+        "Run R/create_chain_site_sf_objects.R first."
+    )
+}
+if (!file.exists(blackmarble_manifest_file)) {
+    stop(
+        "Black Marble manifest not found: ", blackmarble_manifest_file, "\n",
+        "Run R/process_blackmarble_urbanicity_local.R first."
+    )
+}
+
+load(site_sf_file)
+blackmarble_manifest <- fread(
+    blackmarble_manifest_file,
+    na.strings = c("", ".", "NA")
+)
+
+stopifnot(
+    exists("chain_site_sf_objects"),
+    is.list(chain_site_sf_objects),
+    length(chain_site_sf_objects) == 9L,
+    all(vapply(chain_site_sf_objects, inherits, logical(1), "sf"))
+)
+
+site_order <- names(chain_site_sf_objects)
+
+site_data <- rbindlist(lapply(site_order, function(object_name) {
+    site_df <- copy(as.data.table(st_drop_geometry(chain_site_sf_objects[[object_name]])))
+    site_df[, object_name := object_name]
+    site_df
+}), fill = TRUE)
+
+site_data[, adm_year := as.integer(format(as.IDate(adm_date), "%Y"))]
+site_data[, display_site := factor(display_site, levels = unique(display_site))]
+```
+
+## Site Counts
+
+```{r site-counts}
+site_data[, .(
+    n_rows = .N,
+    n_with_urbanicity = sum(!is.na(degree_urban)),
+    n_missing_urbanicity = sum(is.na(degree_urban)),
+    n_missing_gps = sum(is.na(longitude) | is.na(latitude)),
+    years = paste(sort(unique(adm_year)), collapse = ", ")
+), by = .(object_name, display_site, country)][order(display_site)]
+```
+
+## Urbanicity Distributions
+
+```{r urbanicity-histograms}
+#| fig-width: 9
+#| fig-height: 8
+
+ggplot(site_data[!is.na(degree_urban)], aes(x = degree_urban)) +
+    geom_histogram(bins = 30, fill = "#356A8A", color = "white", linewidth = 0.2) +
+    facet_wrap(~ display_site, scales = "free_y") +
+    labs(
+        x = "Black Marble degree_urban",
+        y = "Patient records"
+    ) +
+    theme_minimal(base_size = 11) +
+    theme(
+        panel.grid.minor = element_blank(),
+        strip.text = element_text(face = "bold")
+    )
+```
+
+
+## Site-Year Maps
+
+```{r map-functions}
+read_site_blackmarble_raster <- function(manifest, site_name, target_year) {
+    manifest_rows <- manifest[site == site_name & adm_year == target_year]
+    manifest_rows <- manifest_rows[file.exists(local_path)]
+
+    if (!nrow(manifest_rows)) {
+        stop(
+            "No cached Black Marble H5 files found for ", site_name,
+            " in ", target_year, ". Run R/process_blackmarble_urbanicity_local.R first."
+        )
+    }
+
+    raster_list <- lapply(manifest_rows$local_path, blackmarble_h5_to_raster)
+    if (length(raster_list) == 1L) {
+        return(raster_list[[1]])
+    }
+
+    do.call(terra::mosaic, c(raster_list, fun = "max"))
+}
+
+make_site_extent <- function(site_sf, support_geometry, buffer_deg = 0.08) {
+    point_sf <- site_sf[!st_is_empty(site_sf), ]
+    combined_bbox <- st_bbox(c(
+        st_geometry(point_sf),
+        st_geometry(support_geometry)
+    ))
+
+    terra::ext(
+        combined_bbox[["xmin"]] - buffer_deg,
+        combined_bbox[["xmax"]] + buffer_deg,
+        combined_bbox[["ymin"]] - buffer_deg,
+        combined_bbox[["ymax"]] + buffer_deg
+    )
+}
+
+raster_to_plot_data <- function(blackmarble_raster, site_extent, adm_year) {
+    blackmarble_raster <- terra::crop(blackmarble_raster, site_extent)
+    names(blackmarble_raster) <- "radiance"
+
+    raster_df <- as.data.table(terra::as.data.frame(
+        blackmarble_raster,
+        xy = TRUE,
+        na.rm = FALSE
+    ))
+    raster_df[, `:=`(
+        adm_year = adm_year,
+        log_lights = fifelse(is.na(radiance), NA_real_, log(radiance + 1))
+    )]
+
+    raster_df
+}
+
+make_site_raster_data <- function(site_sf) {
+    support_geometry <- attr(site_sf, "patient_support_geometry")
+    if (!inherits(support_geometry, "sf")) {
+        stop("Site object is missing patient_support_geometry attribute.")
+    }
+
+    site_extent <- make_site_extent(site_sf, support_geometry)
+    site_name <- unique(st_drop_geometry(site_sf)[["source_site"]])
+    site_years <- sort(unique(as.integer(format(as.IDate(site_sf$adm_date), "%Y"))))
+
+    rbindlist(lapply(site_years, function(target_year) {
+        blackmarble_raster <- read_site_blackmarble_raster(
+            manifest = blackmarble_manifest,
+            site_name = site_name,
+            target_year = target_year
+        )
+        raster_to_plot_data(
+            blackmarble_raster = blackmarble_raster,
+            site_extent = site_extent,
+            adm_year = target_year
+        )
+    }), fill = TRUE)
+}
+
+plot_site_year_map <- function(site_sf) {
+    site_sf$adm_year <- as.integer(format(as.IDate(site_sf$adm_date), "%Y"))
+    point_sf <- site_sf[!st_is_empty(site_sf), ]
+    support_geometry <- attr(site_sf, "patient_support_geometry")
+    raster_df <- make_site_raster_data(site_sf)
+
+
+    ggplot() +
+        geom_raster(
+            data = raster_df,
+            aes(x = x, y = y, fill = log_lights)
+        ) +
+        geom_sf(
+            data = support_geometry,
+            fill = NA,
+            color = "white",
+            linewidth = 0.35
+        ) +
+        geom_sf(
+            data = point_sf,
+            inherit.aes = FALSE,
+            color = "deepskyblue",
+            size = 1,
+            alpha = 0.65
+        ) +
+        scale_fill_gradient2(
+            low = "black",
+            mid = "yellow",
+            high = "red",
+            midpoint = 4.5,
+            na.value = "transparent"
+        ) +
+        coord_sf(expand = FALSE) +
+        facet_wrap(~adm_year) +
+        labs(
+            title = unique(site_sf$display_site),
+            fill = "log(lights + 1)"
+        ) +
+        theme_void(base_size = 10) +
+        theme(
+            plot.title = element_text(face = "bold", hjust = 0.5),
+            strip.text = element_text(face = "bold"),
+            legend.position = "bottom"
+        )
+}
+```
+
+```{r site-year-maps}
+#| results: asis
+#| fig-width: 10
+#| fig-height: 7
+
+for (object_name in site_order) {
+  cat(
+    "\n\n### ",
+    unique(chain_site_sf_objects[[object_name]]$display_site),
+    "\n\n",
+    sep = ""
+  )
+  print(plot_site_year_map(chain_site_sf_objects[[object_name]]))
+}
+```

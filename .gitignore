@@ -3,6 +3,7 @@
 .Rhistory
 .RData
 .Ruserdata/
+Rplots.pdf
 .Renviron
 .Renviron.local
 
@@ -23,6 +24,9 @@ data/raw/blackmarble_h5/
 *.hdf
 *.hdf5
 *.nc
+# Real patient data: never commit raw or processed CHAIN extracts
+data/raw/chain_data/
+data/processed/chain_data/
 
 # Generated data outputs that can be rebuilt
 # Keep only the README PNG examples tracked.
@@ -40,3 +44,11 @@ README_files/
 
 # Ad hoc plot outputs written inside R/
 R/*.png
+
+# HDX administrative boundary downloads can be regenerated
+data/raw/boundaries/hdx_admin_boundaries/
+# Quarto rendered report artifacts
+/doc/*.html
+/doc/*.rmarkdown
+/doc/*_files/
+.quarto/
